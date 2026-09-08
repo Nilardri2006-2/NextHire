@@ -20,7 +20,16 @@ import numpy as np
 import sounddevice as sd
 
 SAMPLE_RATE = 16000  # Whisper expects 16kHz mono audio
+# import sounddevice as sd, numpy as np
 
+# duration, fs = 3, 16000
+# print("Recording 3s — talk now...")
+# audio = sd.rec(int(duration * fs), samplerate=fs, channels=1, dtype='float32')
+# sd.wait()
+# print("Peak amplitude:", np.max(np.abs(audio)))
+# print(sd.query_devices())
+
+# print("\nDefault input device index:", sd.default.device[0])
 
 # ---------------------------------------------------------------------
 # STT: Faster-Whisper

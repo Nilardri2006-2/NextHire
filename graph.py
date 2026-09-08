@@ -469,7 +469,7 @@ def generate_pdf(state: InterviewState) -> dict:
 # 6. Wire up the graph: START -> load_resume_and_policy -> screening -> END
 # ---------------------------------------------------------------------
 
-def build_graph():
+def build_graph(checkpointer=None):
     builder = StateGraph(InterviewState)
 
     builder.add_node("load_resume_and_policy", load_resume_and_policy)
@@ -483,7 +483,7 @@ def build_graph():
     builder.add_edge("final", "generate_pdf")
     builder.add_edge("generate_pdf" , END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 interview_graph = build_graph()
