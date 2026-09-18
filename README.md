@@ -6,6 +6,8 @@ listens to your spoken answers, evaluates you, and generates a PDF
 report — all running locally on your own machine.
 
 ---
+![Preview](./Preview.png)
+---
 
 ## Features
 
