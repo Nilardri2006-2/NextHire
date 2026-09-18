@@ -1,30 +1,3 @@
-"""
-graph.py
---------
-Graph so far:
-
-    START -> load_resume_and_policy -> screening -> END
-
-- load_resume_and_policy: reads the resume + hiring-policy PDFs, summarizes
-  the resume, extracts the structured hiring policy (round name, guide,
-  questions list), then runs a SEPARATE dedicated LLM call whose only job
-  is to count how many questions are in each round -- that count is what
-  gets stored in policy.rounds[i].number_of_questions.
-
-- screening: runs the full screening round as a live voice conversation.
-  Reads policy.rounds[0].number_of_questions to know how many questions to
-  ask, and policy.rounds[0].questions as the actual question list. Asks
-  the first question, speaks it, listens for and transcribes the answer,
-  stores the Q&A pair in history, then keeps asking new (non-repeated)
-  questions grounded in the resume, the policy's screening guide, and
-  everything asked so far. Prints each question, each transcribed answer,
-  and a "node complete" line at the end.
-
-You'll scale this out with more nodes later (technical rounds,
-behavioral, etc.) -- this is deliberately just the screening node,
-fully working end to end.
-"""
-
 import os
 from typing import TypedDict, List, Dict
 
@@ -46,14 +19,8 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.enums import TA_CENTER
 
 
-
 load_dotenv()
 
-# ---------------------------------------------------------------------
-# Folder layout:
-#   Folder/Input/  -- resume + policy PDFs go here (you place them)
-#   Folder/Output/ -- generated evaluation report PDF goes here
-# ---------------------------------------------------------------------
 INPUT_DIR = os.path.join("Folder", "Input")
 OUTPUT_DIR = os.path.join("Folder", "Output")
 
@@ -65,9 +32,6 @@ llm = ChatCohere(
     temperature=0.1,
 )
 
-# ---------------------------------------------------------------------
-# 0. Models
-# ---------------------------------------------------------------------
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
@@ -102,10 +66,6 @@ class QuestionCount(BaseModel):
     )
 
 
-# ---------------------------------------------------------------------
-# 1. State schema
-# ---------------------------------------------------------------------
-
 class InterviewState(TypedDict):
     candidate_name: str
     question: str
@@ -119,26 +79,25 @@ class InterviewState(TypedDict):
     pdf_path: str
 
 
-# ---------------------------------------------------------------------
-# 2. load_resume_and_policy node
-# ---------------------------------------------------------------------
-
 def load_resume_and_policy(state: InterviewState) -> dict:
-    if not os.path.isfile(RESUME_PDF_PATH):
+    resume_path = state.get("resume_pdf_path") or RESUME_PDF_PATH
+    policy_path = state.get("policy_pdf_path") or POLICY_PDF_PATH
+
+    if not os.path.isfile(resume_path):
         raise FileNotFoundError(
-            f"Resume PDF not found at '{RESUME_PDF_PATH}'. "
+            f"Resume PDF not found at '{resume_path}'. "
             f"Place it inside the '{INPUT_DIR}' folder."
         )
-    if not os.path.isfile(POLICY_PDF_PATH):
+    if not os.path.isfile(policy_path):
         raise FileNotFoundError(
-            f"Policy PDF not found at '{POLICY_PDF_PATH}'. "
+            f"Policy PDF not found at '{policy_path}'. "
             f"Place it inside the '{INPUT_DIR}' folder."
         )
 
-    resume_docs = PyPDFLoader(RESUME_PDF_PATH).load()
+    resume_docs = PyPDFLoader(resume_path).load()
     raw_resume_text = "\n".join(doc.page_content for doc in resume_docs)
 
-    policy_docs = PyPDFLoader(POLICY_PDF_PATH).load()
+    policy_docs = PyPDFLoader(policy_path).load()
     raw_policy_text = "\n".join(doc.page_content for doc in policy_docs)
 
     if raw_resume_text:
@@ -171,13 +130,6 @@ Policy text:
     structured_policy_llm = llm.with_structured_output(HiringPolicy)
     policy = structured_policy_llm.invoke(p_prompt)
 
-    # Dedicated counting pass: a SEPARATE LLM call whose only job is to
-    # count how many questions belong to each round. Keeping this as its
-    # own focused call (instead of trusting the count that came out of
-    # the single big structured-extraction call above) makes the count
-    # more reliable -- a model doing one narrow task at a time tends to
-    # get it right more consistently than a model juggling round_name +
-    # guide + questions + count all in one pass.
     count_llm = llm.with_structured_output(QuestionCount)
     for interview_round in policy.rounds:
         count_prompt = f"""Count exactly how many separate, distinct questions are listed for
@@ -206,13 +158,9 @@ Return only the count as an integer.
     }
 
 
-# ---------------------------------------------------------------------
-# 3. screening node
-# ---------------------------------------------------------------------
-
 def screening(state: InterviewState) -> dict:
     resume_text = state["resume_text"]
-    policy = state["policy"].rounds[0]  # assuming its screening node
+    policy = state["policy"].rounds[0]
     num_questions = policy.number_of_questions
     history = list(state.get("history") or [])
 
@@ -264,8 +212,8 @@ markdown.
         question = llm.invoke(prompt).content.strip()
         print(f"\n[Screening Q{i + 1}]: {question}")
 
-        speak(question)                      # TTS: interviewer asks it out loud
-        answer = record_and_transcribe()      # STT: candidate's spoken answer
+        speak(question)
+        answer = record_and_transcribe()
 
         print(f"[Candidate's answer]: {answer}\n")
 
@@ -280,9 +228,6 @@ markdown.
     }
 
 
-# ---------------------------------------------------------------------
-# 4. Final Agent
-# ---------------------------------------------------------------------
 def final(state: InterviewState) -> dict:
     resume_text = state["resume_text"]
     policy = state["policy"]
@@ -316,12 +261,9 @@ Use only evidence from the resume and interview.
 
     return {
         "evaluation": evaluation,
-        "llm_call": state.get("llm_call",0)+1
+        "llm_call": state.get("llm_call", 0) + 1
     }
 
-# ---------------------------------------------------------------------
-# 5. pdf generation
-# ---------------------------------------------------------------------
 
 def generate_pdf(state: InterviewState) -> dict:
 
@@ -331,10 +273,8 @@ def generate_pdf(state: InterviewState) -> dict:
     history = state.get("history") or []
     evaluation = state["evaluation"]
 
-    # Output PDF goes in Folder/Output/
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # PDF filename
     safe_name = candidate_name.replace(" ", "_")
 
     pdf_path = os.path.join(
@@ -342,7 +282,6 @@ def generate_pdf(state: InterviewState) -> dict:
         f"{safe_name}_interview_report.pdf"
     )
 
-    # PDF setup
     doc = SimpleDocTemplate(
         pdf_path,
         pagesize=A4,
@@ -358,7 +297,6 @@ def generate_pdf(state: InterviewState) -> dict:
     body_style = styles["BodyText"]
     story = []
 
-    # Title
     story.append(
         Paragraph(
             "Candidate Interview Evaluation Report",
@@ -374,7 +312,6 @@ def generate_pdf(state: InterviewState) -> dict:
     )
     story.append(Spacer(1, 20))
 
-    # Resume
     story.append(
         Paragraph(
             "1. Resume Summary",
@@ -389,7 +326,6 @@ def generate_pdf(state: InterviewState) -> dict:
     )
     story.append(Spacer(1, 20))
 
-    # Policy
     story.append(
         Paragraph(
             "2. Interview Policy",
@@ -419,7 +355,6 @@ def generate_pdf(state: InterviewState) -> dict:
         story.append(Spacer(1, 10))
     story.append(PageBreak())
 
-    # Interview History
     story.append(
         Paragraph(
             "3. Interview Transcript",
@@ -445,7 +380,6 @@ def generate_pdf(state: InterviewState) -> dict:
         story.append(Spacer(1, 15))
     story.append(PageBreak())
 
-    # Evaluation
     story.append(
         Paragraph(
             "4. Candidate Evaluation",
@@ -459,15 +393,12 @@ def generate_pdf(state: InterviewState) -> dict:
         )
     )
 
-    # Generate PDF
     doc.build(story)
     print(f"\nPDF generated successfully:")
     print(pdf_path)
 
     return {"pdf_path": pdf_path}
-# ---------------------------------------------------------------------
-# 6. Wire up the graph: START -> load_resume_and_policy -> screening -> END
-# ---------------------------------------------------------------------
+
 
 def build_graph(checkpointer=None):
     builder = StateGraph(InterviewState)
@@ -481,7 +412,7 @@ def build_graph(checkpointer=None):
     builder.add_edge("load_resume_and_policy", "screening")
     builder.add_edge("screening", "final")
     builder.add_edge("final", "generate_pdf")
-    builder.add_edge("generate_pdf" , END)
+    builder.add_edge("generate_pdf", END)
 
     return builder.compile(checkpointer=checkpointer)
 

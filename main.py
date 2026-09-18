@@ -1,22 +1,3 @@
-"""
-main.py
--------
-Runs the graph:  START -> load_resume_and_policy -> screening -> final ->
-                  generate_pdf -> END
-
-Now backed by a Postgres checkpointer (via Render's DATABASE_URL), so the
-graph's state is saved to the database at every node -- if the process
-crashes or you stop it mid-interview, you can resume from the last
-completed node instead of starting over.
-
-The Postgres connection has to stay open for as long as the graph is
-running, so it's opened here (as a `with` block) rather than at import
-time in graph.py -- that's the one structural change from before.
-
-Run with:
-    python main.py
-"""
-
 import os
 import time
 
@@ -37,7 +18,6 @@ def get_database_url() -> str:
             "'External Database URL' from your Render Postgres dashboard."
         )
 
-    # Render requires SSL for external connections; make sure it's set.
     if "sslmode=" not in db_url:
         separator = "&" if "?" in db_url else "?"
         db_url = f"{db_url}{separator}sslmode=require"
@@ -65,15 +45,10 @@ if __name__ == "__main__":
     db_url = get_database_url()
 
     with PostgresSaver.from_conn_string(db_url) as checkpointer:
-        # Only needs to actually create tables the first time -- safe to
-        # call on every run after that (it won't touch existing tables).
         checkpointer.setup()
 
         interview_graph = build_graph(checkpointer=checkpointer)
 
-        # thread_id groups all checkpoints for this one interview session.
-        # Use something stable per-candidate-per-run so you could resume
-        # this exact session later by invoking with the same thread_id.
         config = {"configurable": {"thread_id": candidate_name}}
 
         result = interview_graph.invoke({

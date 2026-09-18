@@ -1,78 +1,65 @@
-# NextHire — Voice-Based AI Interview Screening Round (Prototype)
+# NextHire — Practice Interview with an AI Interviewer
 
-A LangGraph-based AI interviewer that reads a candidate's resume and a
-company's hiring policy, conducts a live **voice** screening interview
-(speech-to-text in, text-to-speech out), evaluates the candidate, and
-generates a PDF report — with every step checkpointed to Postgres so a
-crash mid-interview doesn't lose progress.
-
-This is the screening-round slice of NextHire, a larger planned platform
-(HR screening → technical rounds → behavioral → hiring manager). Built
-to be extended one node at a time.
+NextHire is a voice-based AI interview practice tool. Upload your resume
+and a question guide, and an AI interviewer asks you questions out loud,
+listens to your spoken answers, evaluates you, and generates a PDF
+report — all running locally on your own machine.
 
 ---
 
-## How it works
+## Features
 
-```
-START
-  │
-  ▼
-load_resume_and_policy   reads resume + hiring-policy PDFs from Folder/Input/,
-  │                      summarizes the resume, and extracts the policy into
-  │                      a structured plan (round name, guide, questions,
-  │                      question count — counted via a dedicated LLM call)
-  ▼
-screening                asks each required screening question out loud
-  │                      (Kokoro TTS), listens for and transcribes the
-  │                      candidate's spoken answer (Faster-Whisper STT),
-  │                      and stores every Q&A pair in history — later
-  │                      questions are grounded in the resume, the policy's
-  │                      guide, and everything already asked (no repeats)
-  ▼
-final                    LLM evaluates the candidate against 10 criteria
-  │                      (communication, technical understanding, resume
-  │                      credibility, role fit, etc.) using the resume,
-  │                      policy, and full interview transcript
-  ▼
-generate_pdf             builds a PDF report (resume summary + policy +
-  │                      full transcript + evaluation) and saves it to
-  │                      Folder/Output/
-  ▼
-END
-```
-
-Every node's output is checkpointed to Postgres as it completes, keyed
-by a `thread_id` (currently the candidate's name) — if the process
-crashes or is stopped, re-running with the same `thread_id` resumes
-from the last completed node instead of starting over.
+- **Voice-based interview, not a chat box.** Questions are spoken aloud
+  (Kokoro TTS) and your answers are recorded and transcribed (Faster-Whisper
+  STT) — no typing required during the interview itself.
+- **Upload your own resume and question guide.** No fixed company or role
+  baked in — bring any resume and any PDF listing the questions you want
+  to be asked, and NextHire builds the interview around them.
+- **Grounded, non-repeating questions.** Each question is generated from
+  your resume, the question guide, and everything already asked — the
+  interviewer won't repeat itself.
+- **Automatic evaluation.** After the round, an LLM scores you across 10
+  criteria (communication, technical understanding, resume credibility,
+  role fit, and more) with a brief justification for each.
+- **PDF report, generated automatically.** A full report — resume summary,
+  interview policy, transcript, and evaluation — is saved as a PDF after
+  every session.
+- **Two ways to run it:**
+  - **Web app** (`backend.py` + `frontend.py`) — a browser-based UI where
+    you upload files and talk to the interviewer through your mic.
+  - **CLI** (`main.py`) — a terminal-based version using push-to-talk,
+    reading fixed resume/policy PDFs from `Folder/Input/`.
+- **Optional Postgres checkpointing.** The CLI flow can persist interview
+  state to a database, so a crash mid-interview doesn't lose progress.
 
 ---
 
 ## Project structure
 
 ```
-.
-├── graph.py               # LangGraph nodes + state schema
-├── main.py                 # entry point: preloads voice models, opens the
-│                            # Postgres connection, runs the graph
-├── voice_utils.py           # STT (Faster-Whisper) + TTS (Kokoro) helpers
+NextHire/
+├── graph.py             LangGraph nodes: load_resume_and_policy, screening,
+│                         final (evaluation), generate_pdf
+├── api_helpers.py         Question-generation prompts, reused by the web backend
+├── backend.py              FastAPI app (web mode): /start and /answer endpoints
+├── frontend.py              Streamlit app (web mode): avatar + speaking/listening UI
+├── main.py                  CLI entry point (terminal mode, with Postgres checkpointing)
+├── voice_utils.py             STT (Faster-Whisper) + TTS (Kokoro) helpers
+├── interviewer.png              Avatar shown in the web UI
 ├── requirements.txt
-├── .env                     # your API keys / DB URL (not committed)
+├── .env                          Your API keys / DB URL (not committed)
 └── Folder/
-    ├── Input/                 # <- put the resume + policy PDFs here
-    │     ├── <candidate>_resume.pdf
-    │     └── xyz hiring policy.pdf
-    └── Output/                 # <- generated evaluation report PDFs land here
+    ├── Input/                      CLI mode reads its resume + policy PDFs here
+    └── Output/                       Generated interview report PDFs land here
 ```
 
 ---
 
-## Setup
+## Local setup
 
 ### 1. System dependency
 
-Kokoro (TTS) needs `espeak-ng` installed at the OS level (not via pip):
+Kokoro (TTS) needs `espeak-ng` installed at the OS level:
 
 ```bash
 # Ubuntu / Debian / WSL
@@ -81,7 +68,7 @@ sudo apt-get update && sudo apt-get install -y espeak-ng
 # macOS
 brew install espeak-ng
 ```
-Windows: install via the [espeak-ng releases page](https://github.com/espeak-ng/espeak-ng/releases), or run everything inside WSL instead — smoother for audio ML libraries on Windows generally.
+Windows: install via the [espeak-ng releases page](https://github.com/espeak-ng/espeak-ng/releases), or run everything inside WSL.
 
 ### 2. Python environment
 
@@ -90,17 +77,16 @@ python3 -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
-Use Python 3.9–3.12 — some ML packages here lag behind on brand-new Python versions.
+Use Python 3.9–3.12.
 
 ### 3. Environment variables
 
 Create a `.env` file in the project root:
 
 ```bash
-# LLM
 COHERE_API_KEY=your-cohere-key
 
-# Postgres checkpointing (Render Postgres — use the "External Database URL")
+# Only needed for the CLI's Postgres checkpointing (main.py)
 DATABASE_URL=postgres://user:password@host:5432/dbname
 
 # Optional: LangSmith tracing
@@ -109,72 +95,49 @@ LANGCHAIN_API_KEY=your-langsmith-key
 LANGCHAIN_PROJECT=nexthire
 ```
 
-| Variable | Required? | Notes |
-|---|---|---|
-| `COHERE_API_KEY` | Yes (recommended) | Without it, some prompts fall back to templated text instead of LLM-generated |
-| `DATABASE_URL` | Yes | From Render Postgres dashboard. `main.py` auto-appends `sslmode=require` if missing — Render requires SSL |
-| `LANGCHAIN_TRACING_V2` / `LANGCHAIN_API_KEY` / `LANGCHAIN_PROJECT` | No | Only needed if you want traces on the LangSmith dashboard |
+---
 
-### 4. Add your input files
+## Running it
 
-Drop these two PDFs into `Folder/Input/`:
-- The candidate's resume
-- The hiring policy PDF (must include a numbered list of required screening questions and a guide for the round — that's what gets extracted and asked)
+### Option A — Web app (recommended)
 
-Update the filenames at the top of `graph.py` if they don't match:
+```bash
+uvicorn backend:app --reload --port 8000        # terminal 1
+streamlit run frontend.py                        # terminal 2
+```
+
+Open the Streamlit URL, enter your name, upload your resume and question
+guide PDFs, and start — the avatar speaks each question, then switches to
+listening for your recorded answer via your browser's microphone.
+
+### Option B — CLI (terminal, push-to-talk)
+
+Drop a resume and a policy PDF into `Folder/Input/`, matching the
+filenames set in `graph.py`:
 ```python
 RESUME_PDF_PATH = os.path.join(INPUT_DIR, "NILARDRI_PRAMANICK_RESUME_v4.pdf")
 POLICY_PDF_PATH = os.path.join(INPUT_DIR, "xyz hiring policy_3.pdf")
 ```
 
-### 5. Run it
-
+Then run:
 ```bash
 python main.py
 ```
-
-You'll be asked for a candidate name, then the interview runs live:
-each question is spoken out loud, you answer by voice (push-to-talk —
-press Enter to start recording, Enter again to stop), and at the end
-you'll see the full transcript, the evaluation, and the path to the
-generated PDF report.
+You'll be asked for a candidate name, then the interview runs in the
+terminal: each question is spoken, you answer by pressing Enter to
+start/stop recording, and at the end you'll see the full transcript, the
+evaluation, and the path to the generated PDF report.
 
 ---
 
-## Known limitations / what's next
+## Known limitations
 
-- **Push-to-talk, not always-listening.** Simpler to get right first; a
-  VAD-based (voice-activity-detection) auto-listen mode is a natural
-  upgrade once this loop is solid.
-- **CPU-only latency.** Expect ~2–6 seconds of dead air between the
-  candidate finishing and the interviewer responding, on CPU. A GPU
-  (even free-tier cloud) meaningfully cuts this down — see
-  `voice_utils.py` for the `device="cuda"` swap.
-- **One round only.** The graph currently ends after screening +
-  evaluation. Adding technical/behavioral rounds is the same pattern:
-  new node function, `builder.add_node(...)`, rewire the edge that
-  currently points from `screening` to `final`.
-- **Single-candidate CLI flow**, not yet a hosted multi-user platform —
-  `thread_id` is currently just the candidate's name; a real deployment
-  would need unique session IDs and a proper frontend instead of
-  terminal input/output.
-
----
-
-## Troubleshooting
-
-- **Only 1 question gets asked instead of the number in the policy** —
-  check the `[debug]` lines `load_resume_and_policy` prints; if the
-  dedicated question-counting LLM call is under-counting, check that
-  your policy PDF's questions are in a clear numbered list.
-- **Transcriptions come out wrong / unrelated to what you said** —
-  check the `peak amplitude` debug line printed after each recording;
-  if it's below ~0.02, you're likely recording from the wrong
-  microphone (`sd.query_devices()` shows all available devices).
-- **Postgres connection fails** — make sure `sslmode=require` is on
-  the connection string (Render requires SSL) and that you used the
-  **External**, not Internal, database URL if running locally.
-- **First run feels very slow** — that's mostly one-time model
-  downloads/loading (Whisper + Kokoro weights). `main.py` preloads
-  both before asking for a candidate name specifically so this cost is
-  paid once, up front, not per question.
+- Push-to-talk / manual recording, not always-listening (voice-activity
+  detection).
+- CPU-only inference means a few seconds of delay between your answer
+  and the next question — a GPU noticeably speeds this up.
+- Single screening round only — technical, behavioral, and hiring-manager
+  rounds are a natural next step, following the same node pattern in
+  `graph.py`.
+- Runs locally; browser-based multi-user hosting requires a real deployment
+  (see the web app's architecture notes if you want to take this further).

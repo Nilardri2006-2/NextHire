@@ -2,7 +2,6 @@ langgraph
 langchain-core
 langchain-cohere
 langsmith                   
-
 langchain-community           
 pypdf                         
 python-dotenv                 
@@ -10,13 +9,15 @@ pydantic
 typing_extensions             
 langgraph-checkpoint-postgres
 psycopg[binary,pool]
-
 reportlab
-
 faster-whisper
-
 kokoro>=0.9.4
 soundfile
-
 sounddevice
 numpy
+fastapi
+uvicorn[standard]
+python-multipart      
+streamlit>=1.38       
+requests
+soundfile             
